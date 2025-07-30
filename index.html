@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Système de suggestion avec détection clignement d’œil</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 40px;
+      background-color: #f9f9f9;
+    }
+    textarea {
+      width: 100%;
+      height: 100px;
+      padding: 10px;
+      font-size: 1.1em;
+      margin-bottom: 20px;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 1em;
+      cursor: pointer;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      margin-right: 10px;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    h3 {
+      margin-top: 30px;
+    }
+    ul {
+      list-style-type: disc;
+      margin-left: 20px;
+    }
+    li {
+      margin-bottom: 5px;
+      transition: background-color 0.3s;
+    }
+    li.highlight {
+      background-color: yellow;
+    }
+    .keyboard {
+      display: grid;
+      grid-template-columns: repeat(10, 1fr);
+      gap: 5px;
+      margin-top: 20px;
+    }
+    .key {
+      padding: 15px;
+      text-align: center;
+      background-color: #eee;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      font-size: 1.1em;
+      transition: background-color 0.3s, transform 0.1s;
+      user-select: none;
+    }
+    .key:hover,
+    .key.hovered {
+      background-color: #cde;
+      transform: scale(1.05);
+    }
+
+    #status {
+      margin-top: 10px;
+      font-weight: bold;
+      color: green;
+    }
+
+    /* Canvas for face mesh overlay */
+    #output_canvas {
+      position: fixed;
+      right: 10px;
+      top: 10px;
+      width: 320px;
+      height: 240px;
+      border: 1px solid #ccc;
+      background: #000;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Système de suggestion avec détection clignement d’œil</h1>
+
+  <label for="text-input">Entrez une phrase :</label>
+  <textarea id="text-input" placeholder="Exemple : Bonjour, comment..."></textarea>
+  <br>
+  <button onclick="updateSuggestions()">Demander suggestions</button>
+  <button onclick="startListening()">🎤 Activer la voix</button>
+
+  <div>
+    <h3>Suggestions GPT-2 :</h3>
+    <ul id="suggestions-list"></ul>
+  </div>
+
+  <div>
+    <h3>Tokens (Spark NLP) :</h3>
+    <ul id="tokens-list"></ul>
+  </div>
+
+  <div>
+    <h3>Clavier virtuel :</h3>
+    <div class="keyboard" id="keyboard"></div>
+  </div>
+
+  <div id="status">Statut : Initialisation...</div>
+
+  <canvas id="output_canvas" width="320" height="240"></canvas>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+  <script>
+    // Variables pour le clavier virtuel
+    let suggestions = [];
+    const keyboardKeys = "abcdefghijklmnopqrstuvwxyz.,!? ".split("");
+    const keyboardContainer = document.getElementById("keyboard");
+    const textarea = document.getElementById("text-input");
+    const suggestionsList = document.getElementById("suggestions-list");
+    const tokensList = document.getElementById("tokens-list");
+    const statusDiv = document.getElementById("status");
+
+    keyboardKeys.forEach(key => {
+      const btn = document.createElement("div");
+      btn.className = "key";
+      btn.textContent = key;
+      btn.setAttribute("data-key", key);
+      btn.addEventListener("mouseenter", () => btn.classList.add("hovered"));
+      btn.addEventListener("mouseleave", () => btn.classList.remove("hovered"));
+      btn.addEventListener("click", () => insertChar(key));
+      keyboardContainer.appendChild(btn);
+    });
+
+    function insertChar(char) {
+      textarea.value += char;
+      updateSuggestions(); // actualiser les suggestions après insertion
+    }
+
+    async function updateSuggestions() {
+      const text = textarea.value.trim();
+      if (!text) {
+        suggestionsList.innerHTML = "";
+        tokensList.innerHTML = "";
+        suggestions = [];
+        return;
+      }
+
+      try {
+        const response = await fetch('http://eyecue-backend:5000/suggest', {
+    method: 'POST',
+    headers: {
+        'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ text: texte })
+});
+
+        if (!response.ok) throw new Error("Erreur serveur: " + response.status);
+        const data = await response.json();
+
+        // Suggestions
+        suggestionsList.innerHTML = "";
+        suggestions = data.suggestions;
+
+        data.suggestions.forEach((suggestion, index) => {
+          const li = document.createElement("li");
+          li.textContent = suggestion;
+          li.setAttribute("data-index", index + 1);
+          suggestionsList.appendChild(li);
+
+          const utterance = new SpeechSynthesisUtterance(`Suggestion ${index + 1} : ${suggestion}`);
+          utterance.lang = 'fr-FR';
+          speechSynthesis.speak(utterance);
+        });
+
+        // Tokens
+        tokensList.innerHTML = "";
+        data.tokens.forEach(token => {
+          const li = document.createElement("li");
+          li.textContent = token;
+          tokensList.appendChild(li);
+        });
+
+      } catch (error) {
+        console.error("Erreur récupération suggestions:", error);
+        alert("Une erreur est survenue lors de la récupération des suggestions.");
+      }
+    }
+
+    function startListening() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        alert("Reconnaissance vocale non supportée sur ce navigateur.");
+        return;
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.lang = "fr-FR";
+      recognition.start();
+
+      recognition.onresult = function(event) {
+        const command = event.results[0][0].transcript.toLowerCase();
+        console.log("Commande vocale : ", command);
+
+        if (command.includes("première")) selectSuggestion(1);
+        else if (command.includes("deuxième")) selectSuggestion(2);
+        else if (command.includes("troisième")) selectSuggestion(3);
+        else speak("Commande non reconnue.");
+      };
+
+      recognition.onerror = function(event) {
+        console.error("Erreur de reconnaissance vocale :", event.error);
+        speak("Erreur de reconnaissance vocale.");
+      };
+    }
+
+    function selectSuggestion(index) {
+      const selected = suggestions[index - 1];
+      if (selected) {
+        textarea.value = textarea.value.trim() + ' ' + selected.trim();
+
+        // surbrillance temporaire
+        const lis = document.querySelectorAll("#suggestions-list li");
+        lis.forEach(li => li.classList.remove("highlight"));
+        const targetLi = lis[index - 1];
+        if (targetLi) {
+          targetLi.classList.add("highlight");
+          setTimeout(() => targetLi.classList.remove("highlight"), 1500);
+        }
+
+        speak("Suggestion insérée : " + selected);
+        updateSuggestions();
+      } else {
+        speak("Suggestion non disponible.");
+      }
+    }
+
+    function speak(text) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'fr-FR';
+      speechSynthesis.speak(utterance);
+    }
+
+    // Gestion du clignement d’œil avec MediaPipe FaceMesh et EAR
+
+    // Indices pour yeux (Mediapipe FACEMESH)
+    const LEFT_EYE_INDICES = [33, 160, 158, 133, 153, 144];
+    const RIGHT_EYE_INDICES = [362, 385, 387, 263, 373, 380];
+
+    const BLINK_THRESHOLD = 0.23; // ajuster en fonction
+    const BLINK_COOLDOWN = 1200; // ms entre deux blinks autorisés
+
+    let lastBlinkTime = 0;
+
+    // Fonction distance Euclidienne 2D
+    function euclideanDistance(a, b) {
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    }
+
+    // Calcul EAR (Eye Aspect Ratio)
+    function calculateEAR(landmarks, eyeIndices) {
+      const p0 = landmarks[eyeIndices[0]];
+      const p1 = landmarks[eyeIndices[1]];
+      const p2 = landmarks[eyeIndices[2]];
+      const p3 = landmarks[eyeIndices[3]];
+      const p4 = landmarks[eyeIndices[4]];
+      const p5 = landmarks[eyeIndices[5]];
+
+      const vertical1 = euclideanDistance(p1, p5);
+      const vertical2 = euclideanDistance(p2, p4);
+      const horizontal = euclideanDistance(p0, p3);
+
+      return (vertical1 + vertical2) / (2.0 * horizontal);
+    }
+
+    function onResults(results) {
+      const canvas = document.getElementById('output_canvas');
+      const ctx = canvas.getContext('2d');
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const landmarks = results.multiFaceLandmarks[0];
+
+        // Dessiner mesh
+        window.drawConnectors(ctx, landmarks, window.FACEMESH_TESSELATION,
+          {color: '#C0C0C070', lineWidth: 1});
+        window.drawConnectors(ctx, landmarks, window.FACEMESH_RIGHT_EYE, {color: 'red'});
+        window.drawConnectors(ctx, landmarks, window.FACEMESH_LEFT_EYE, {color: 'red'});
+
+        const leftEAR = calculateEAR(landmarks, LEFT_EYE_INDICES);
+        const rightEAR = calculateEAR(landmarks, RIGHT_EYE_INDICES);
+        const avgEAR = (leftEAR + rightEAR) / 2.0;
+
+        ctx.fillStyle = avgEAR < BLINK_THRESHOLD ? 'red' : 'green';
+        ctx.font = "20px Arial";
+        ctx.fillText("EAR: " + avgEAR.toFixed(3), 10, 20);
+
+        // Si EAR < seuil => clignement détecté
+        const now = Date.now();
+        if (avgEAR < BLINK_THRESHOLD && (now - lastBlinkTime) > BLINK_COOLDOWN) {
+          lastBlinkTime = now;
+          statusDiv.textContent = "Statut : Clignement détecté, lettre insérée !";
+
+          // Trouver la lettre actuellement survolée (hovered) sur clavier
+          const hoveredKey = document.querySelector(".key.hovered");
+          if (hoveredKey) {
+            hoveredKey.click();
+          }
+          setTimeout(() => statusDiv.textContent = "Statut : En attente de clignement...", 1500);
+        } else {
+          statusDiv.textContent = "Statut : En attente de clignement...";
+        }
+      } else {
+        statusDiv.textContent = "Statut : Visage non détecté";
+      }
+
+      ctx.restore();
+    }
+
+    // Initialisation Mediapipe FaceMesh
+    const faceMesh = new window.FaceMesh({
+      locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+      }
+    });
+
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
+    });
+
+    faceMesh.onResults(onResults);
+
+    // Camera setup
+    const videoElement = document.createElement('video');
+    videoElement.style.display = 'none';
+    document.body.appendChild(videoElement);
+
+    const camera = new window.Camera(videoElement, {
+      onFrame: async () => {
+        await faceMesh.send({image: videoElement});
+      },
+      width: 320,
+      height: 240
+    });
+
+    camera.start();
+
+    // Simuler un clic au clavier via touche Espace (pour tests manuels)
+    document.addEventListener("keydown", (e) => {
+      if (e.key === " ") {
+        const hovered = document.querySelector(".key.hovered");
+        if (hovered) hovered.click();
+      }
+    });
+
+  </script>
+</body>
+</html>

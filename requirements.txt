@@ -1,0 +1,5 @@
+flask
+flask-cors
+transformers
+pyspark==3.4.1
+spark-nlp==5.3.3
